@@ -74,8 +74,6 @@ def calculate_heatmaps(ref_scores, target_hsv, mask, threshold, offset_deficienc
             normalization_factor = effective_pixels / max_effectifs_pixels_within_mask
             
 
-            if normalization_factor > 1:
-                print("Normalization factor is greater than 1")
             score_h = np.mean(np.abs(patch_h - ref_h[:valid_mask_height, :valid_mask_width])) * normalization_factor
             score_s = np.mean(np.abs(patch_s - ref_s[:valid_mask_height, :valid_mask_width])) * normalization_factor
             score_v = np.mean(np.abs(patch_v - ref_v[:valid_mask_height, :valid_mask_width])) * normalization_factor
