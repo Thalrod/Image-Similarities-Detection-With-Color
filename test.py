@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, Button
 from statistics import *
 
-offset_accuracy = 0
+offset_accuracy = 1
 offset_deficiency = 0
 imgplot = None
 ref_image_path = "available_logo.png"
@@ -31,7 +31,11 @@ def calculate_pixel_scores(ref_hsv, mask):
                 v_scores[y] = 0
     return h_scores, s_scores, v_scores
 
-def calculate_heatmaps(ref_scores, target_hsv, mask, threshold, offset_deficiency, offset_accuracy):
+def apply_normalized_tunable_sigmoid_function(value, offset_accuracy):
+    #https://dhemery.github.io/DHE-Modules/technical/sigmoid/
+    return (value - value * offset_accuracy) / (offset_accuracy - np.abs(value) * 2 * offset_accuracy + 1)
+
+def calculate_heatmaps(ref_scores, target_hsv, mask, threshold, offset_deficiency, accuracy_factor):
     heatmap_h = np.zeros((target_hsv.shape[0], target_hsv.shape[1]), dtype=np.float16)
     heatmap_s = np.zeros((target_hsv.shape[0], target_hsv.shape[1]), dtype=np.float16)
     heatmap_v = np.zeros((target_hsv.shape[0], target_hsv.shape[1]), dtype=np.float16)
@@ -63,6 +67,10 @@ def calculate_heatmaps(ref_scores, target_hsv, mask, threshold, offset_deficienc
             patch_s = patch[:valid_mask_height, :valid_mask_width, 1] * valid_mask
             patch_v = patch[:valid_mask_height, :valid_mask_width, 2] * valid_mask
             
+            ref_patch_h = ref_h[:valid_mask_height, :valid_mask_width]
+            ref_patch_s = ref_s[:valid_mask_height, :valid_mask_width]
+            ref_patch_v = ref_v[:valid_mask_height, :valid_mask_width]
+            
             effective_pixels = np.sum(valid_mask)
             
             """  
@@ -74,12 +82,23 @@ def calculate_heatmaps(ref_scores, target_hsv, mask, threshold, offset_deficienc
             normalization_factor = effective_pixels / max_effectifs_pixels_within_mask
             
 
-            score_h = np.mean(np.abs(patch_h - ref_h[:valid_mask_height, :valid_mask_width])) * normalization_factor
-            score_s = np.mean(np.abs(patch_s - ref_s[:valid_mask_height, :valid_mask_width])) * normalization_factor
-            score_v = np.mean(np.abs(patch_v - ref_v[:valid_mask_height, :valid_mask_width])) * normalization_factor
+            score_h = patch_h - ref_patch_h
+            score_s = patch_s - ref_patch_s
+            score_v = patch_v - ref_patch_v
             
+
+            score_h = apply_normalized_tunable_sigmoid_function(score_h, accuracy_factor - 1) * normalization_factor 
+            score_s = apply_normalized_tunable_sigmoid_function(score_s, accuracy_factor - 1) * normalization_factor 
+            score_v = apply_normalized_tunable_sigmoid_function(score_v, accuracy_factor - 1) * normalization_factor 
+            
+            score_h = np.mean(score_h)
+            score_s = np.mean(score_s) 
+            score_v = np.mean(score_v) 
+                        
             if x == 0 and y == 0:
-                print(normalization_factor, effective_pixels, max_effectifs_pixels_within_mask)
+                print(f"score_h: {score_h}, score_s: {score_s}, score_v: {score_v}")
+                print(f'normalization_factor: {normalization_factor}')
+                print(f'accacy_factor: {accuracy_factor}')
             
             heatmap_h[y, x] = score_h
             heatmap_s[y, x] = score_s
@@ -135,7 +154,7 @@ def calculate():
     """
     ot = time()
     global overlay
-    overlay= create_color_heatmap(ref_image_path, target_image_path, threshold, offset_accuracy, offset_deficiency)
+    overlay= create_color_heatmap(ref_image_path, target_image_path, threshold, offset_deficiency, offset_accuracy)
     et = time() - ot
     print(f"Elapsed time: {et} s")
 
@@ -170,7 +189,7 @@ ax_slider_accuracy = plt.axes([0.25, 0.2, 0.65, 0.03], facecolor=axcolor)
 ax_slider_deficiency = plt.axes([0.25, 0.15, 0.65, 0.03], facecolor=axcolor)
 ax_slider_threshold = plt.axes([0.25, 0.1, 0.65, 0.03], facecolor=axcolor)
 
-slider_accuracy = Slider(ax_slider_accuracy, 'Accuracy', 0, .1, valinit=offset_accuracy, valstep=0.01)
+slider_accuracy = Slider(ax_slider_accuracy, 'Accuracy', 0.75, 1.25, valinit=offset_accuracy, valstep=0.0001)
 slider_deficiency = Slider(ax_slider_deficiency, 'Deficiency', 0, .1, valinit=offset_deficiency, valstep=0.01)
 slider_threshold = Slider(ax_slider_threshold, 'Threshold', 0, 1, valinit=threshold, valstep=0.01)
 
