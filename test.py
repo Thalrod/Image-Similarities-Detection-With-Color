@@ -1,22 +1,18 @@
 import cv2
 import numpy as np
 from time import time
+import matplotlib.pyplot as plt
+from matplotlib.widgets import Slider, Button
+from statistics import *
 
-
-def ResizeWithAspectRatio(image, width=None, height=None, inter=cv2.INTER_AREA):
-    dim = None
-    (h, w) = image.shape[:2]
-
-    if width is None and height is None:
-        return image
-    if width is None:
-        r = height / float(h)
-        dim = (int(w * r), height)
-    else:
-        r = width / float(w)
-        dim = (width, int(h * r))
-
-    return cv2.resize(image, dim, interpolation=inter)
+offset_accuracy = 0
+offset_deficiency = 0
+imgplot = None
+ref_image_path = "available_logo.png"
+target_image_path = "screenshot.jpg"
+threshold = 0.4
+overlay = None
+combined_heatmap = None
 
 def calculate_pixel_scores(ref_hsv, mask):
     ref_hsc_shape = ref_hsv.shape[:2]
@@ -35,52 +31,58 @@ def calculate_pixel_scores(ref_hsv, mask):
                 v_scores[y] = 0
     return h_scores, s_scores, v_scores
 
-def calculate_heatmaps(ref_scores, target_hsv, mask):
+def calculate_heatmaps(ref_scores, target_hsv, mask, threshold, offset_deficiency, offset_accuracy):
     heatmap_h = np.zeros((target_hsv.shape[0], target_hsv.shape[1]), dtype=np.float16)
     heatmap_s = np.zeros((target_hsv.shape[0], target_hsv.shape[1]), dtype=np.float16)
     heatmap_v = np.zeros((target_hsv.shape[0], target_hsv.shape[1]), dtype=np.float16)
 
     mask_height, mask_width = mask.shape
     ref_h, ref_s, ref_v = ref_scores
-    """ 
-    accuracy is the ratio between how close each pixel is to the reference 
-    confidence is how close all pixel averages are to the reference average
-    
-    for example, if the object you're looking for is cut in 2, but is almost identical, then the precision will be high, but the confidence will be low, 
-    because there won't be many pixels. 
-    
-    If it's something completely different, the precision will be low, but the confidence higher."""
 
-    accuracy_weight = 0.5
-    confidence_weight = 0.5
+    #max_effectif_pixels_within_mask is the max number of pixels that can be affected by the mask when the mask x y value is true
+    max_effectifs_pixels_within_mask = np.sum(mask)
     
-
     for y in range(target_hsv.shape[0]):
         for x in range(target_hsv.shape[1]):
-            y_start = max(0, y - mask_height // 2)
-            y_end = min(target_hsv.shape[0], y + mask_height // 2 + 1)
-            x_start = max(0, x - mask_width // 2)
-            x_end = min(target_hsv.shape[1], x + mask_width // 2 + 1)
+            # Determine the patch size and location to compare with the reference image
+            patch_x1y1 = (max(0, x - mask_width // 2), max(0, y - mask_height // 2))
+            patch_x2y2 = (min(target_hsv.shape[1], x + mask_width // 2 + 1), min(target_hsv.shape[0], y + mask_height // 2 + 1))
+            patch = target_hsv[patch_x1y1[1]:patch_x2y2[1], patch_x1y1[0]:patch_x2y2[0]]
+            
+            # Determine the valid mask region, it should be within the patch
+            valid_mask_height = min(patch_x2y2[1] - patch_x1y1[1], mask_height)
+            valid_mask_width = min(patch_x2y2[0] - patch_x1y1[0], mask_width)
+            valid_x = mask_width // 2
+            valid_y = mask_height // 2
+            valid_mask_x1y1 = (valid_x - valid_mask_width // 2, valid_y - valid_mask_height // 2)
+            valid_mask_x2y2 = (valid_x + valid_mask_width // 2 + valid_mask_width %2, valid_y + valid_mask_height // 2 + valid_mask_height %2)
+            valid_mask = mask[valid_mask_x1y1[1]:valid_mask_x2y2[1], valid_mask_x1y1[0]:valid_mask_x2y2[0]]
 
-            patch = target_hsv[y_start:y_end, x_start:x_end]
-           
-            valid_mask_height = min(y_end - y_start, mask_height)
-            valid_mask_width = min(x_end - x_start, mask_width)
-            valid_y_start = y_start + valid_mask_height
-            valid_y_end = valid_y_start + valid_mask_height
-            valid_x_start = x_start + valid_mask_width
-            valid_x_end = valid_x_start + valid_mask_width
-            print(valid_y_start, valid_y_end, valid_x_start, valid_x_end)
-            valid_mask = mask[valid_y_start:valid_y_end, valid_x_start:valid_x_end]
-
+            # Calculate the score for each channel
             patch_h = patch[:valid_mask_height, :valid_mask_width, 0] * valid_mask
             patch_s = patch[:valid_mask_height, :valid_mask_width, 1] * valid_mask
             patch_v = patch[:valid_mask_height, :valid_mask_width, 2] * valid_mask
             
-            score_h = np.mean(np.abs(patch_h - ref_h[:valid_mask_height, :valid_mask_width]))
-            score_s = np.mean(np.abs(patch_s - ref_s[:valid_mask_height, :valid_mask_width]))
-            score_v = np.mean(np.abs(patch_v - ref_v[:valid_mask_height, :valid_mask_width]))
+            effective_pixels = np.sum(valid_mask)
+            
+            """  
+            The normalization factor is used to normalize the score of the pixels that are not masked out
+            
+            The normalization factor is calculated as follows:
+            normalization_factor = effective pixels in the mask / max effectifs pixels in the mask
+            """
+            normalization_factor = effective_pixels / max_effectifs_pixels_within_mask
+            
 
+            if normalization_factor > 1:
+                print("Normalization factor is greater than 1")
+            score_h = np.mean(np.abs(patch_h - ref_h[:valid_mask_height, :valid_mask_width])) * normalization_factor
+            score_s = np.mean(np.abs(patch_s - ref_s[:valid_mask_height, :valid_mask_width])) * normalization_factor
+            score_v = np.mean(np.abs(patch_v - ref_v[:valid_mask_height, :valid_mask_width])) * normalization_factor
+            
+            if x == 0 and y == 0:
+                print(normalization_factor, effective_pixels, max_effectifs_pixels_within_mask)
+            
             heatmap_h[y, x] = score_h
             heatmap_s[y, x] = score_s
             heatmap_v[y, x] = score_v
@@ -93,7 +95,8 @@ def create_combined_heatmap(heatmap_h, heatmap_s, heatmap_v):
     combined_heatmap = cv2.normalize(combined_heatmap.astype('float32'), None, 0, 1, cv2.NORM_MINMAX)
     return combined_heatmap
 
-def create_color_heatmap(ref_image_path, target_image_path, threshold=.4):
+def create_color_heatmap(ref_image_path, target_image_path, threshold, offset_deficiency, offset_accuracy):
+    #print(ref_image_path, target_image_path, threshold, offset_accuracy, offset_deficiency)
     ref_image = cv2.imread(ref_image_path, cv2.IMREAD_UNCHANGED)
     target_image = cv2.imread(target_image_path)
 
@@ -107,31 +110,82 @@ def create_color_heatmap(ref_image_path, target_image_path, threshold=.4):
     target_hsv = cv2.cvtColor(target_image, cv2.COLOR_BGR2HSV)
 
     ref_scores = calculate_pixel_scores(ref_hsv, mask)
-    heatmap_h, heatmap_s, heatmap_v = calculate_heatmaps(ref_scores, target_hsv, mask)
-    print(heatmap_h.shape, target_hsv.shape)
+    heatmap_h, heatmap_s, heatmap_v = calculate_heatmaps(ref_scores, target_hsv, mask, threshold, offset_deficiency, offset_accuracy)
+    global combined_heatmap
     combined_heatmap = create_combined_heatmap(heatmap_h, heatmap_s, heatmap_v)
+    # print max value of combined_heatmap and its position
+    #print(np.max(combined_heatmap), np.unravel_index(np.argmax(combined_heatmap, axis=None), combined_heatmap.shape))
+    heatmap_colored = cv2.applyColorMap((1 - combined_heatmap * 255).astype(np.uint8), cv2.COLORMAP_JET)
 
-    heatmap_colored = cv2.applyColorMap((combined_heatmap * 255).astype(np.uint8), cv2.COLORMAP_JET)
+    overlay = cv2.addWeighted(target_image, 0.5, heatmap_colored, 0.5, 0)
+    return overlay
+
+
+def display_pixel_score(event):
+    if event.inaxes == ax:
+        x, y = int(event.xdata), int(event.ydata)
+        if 0 <= y < combined_heatmap.shape[0] and 0 <= x < combined_heatmap.shape[1]:
+            # pixel value of the combined heatmap
+            pixel_score = combined_heatmap[y, x] 
+            fig.canvas.manager.set_window_title(f"Pixel ({x}, {y}) - Score: {pixel_score:.2f}")
+        else:
+            fig.canvas.manager.set_window_title("")
+
+def calculate():
+    """
+    Calcule l'overlay et retourne l'image mise à jour.
+    """
+    ot = time()
+    global overlay
+    overlay= create_color_heatmap(ref_image_path, target_image_path, threshold, offset_accuracy, offset_deficiency)
+    et = time() - ot
+    print(f"Elapsed time: {et} s")
+
+def update_image():
+    global imgplot
+    global overlay
+    calculate()
+    if imgplot is None:
+        imgplot = ax.imshow(overlay)
+    else:
+        imgplot.set_data(overlay)
+    fig.canvas.draw_idle()
     
-    
-    thresholded_heatmap = np.zeros(combined_heatmap.shape, dtype=np.uint8)
-    thresholded_heatmap[combined_heatmap >= threshold] = 255
-    print(np.max(combined_heatmap))
-    overlay_threshold = cv2.addWeighted(target_image, 0.7, cv2.cvtColor(thresholded_heatmap, cv2.COLOR_GRAY2BGR), 0.8, 0)
-    
-    
-    overlay = cv2.addWeighted(target_image, 0.7, heatmap_colored, 0.3, 0)
 
-    return overlay, heatmap_colored, thresholded_heatmap, overlay_threshold
+def update_accuracy(val):
+    global offset_accuracy
+    offset_accuracy = val
 
+def update_deficiency_factor(val):
+    global offset_deficiency
+    offset_deficiency = val
 
-ref_image_path = "available_logo.png"
-target_image_path = "screenshot.jpg"
+def update_threshold(val):
+    global threshold
+    threshold = val
 
-ot = time()
-overlay, heatmap_colored,thresholded_heatmap, overlay_threshold = create_color_heatmap(ref_image_path, target_image_path)
-et = time() - ot
-print(f"Elapsed time: {et} s")
-cv2.imshow("Heatmap Overlay", ResizeWithAspectRatio(overlay, width=250))
-cv2.waitKey(0)
-cv2.destroyAllWindows()
+fig, ax = plt.subplots(figsize=(15, 5))
+plt.subplots_adjust(left=0.1, bottom=0.25, right=0.9, top=0.99, wspace=0.2, hspace=0.2)
+axcolor = 'lightgoldenrodyellow'
+
+ax_slider_accuracy = plt.axes([0.25, 0.2, 0.65, 0.03], facecolor=axcolor)
+ax_slider_deficiency = plt.axes([0.25, 0.15, 0.65, 0.03], facecolor=axcolor)
+ax_slider_threshold = plt.axes([0.25, 0.1, 0.65, 0.03], facecolor=axcolor)
+
+slider_accuracy = Slider(ax_slider_accuracy, 'Accuracy', 0, .1, valinit=offset_accuracy, valstep=0.01)
+slider_deficiency = Slider(ax_slider_deficiency, 'Deficiency', 0, .1, valinit=offset_deficiency, valstep=0.01)
+slider_threshold = Slider(ax_slider_threshold, 'Threshold', 0, 1, valinit=threshold, valstep=0.01)
+
+ax_button = plt.axes([0.8, 0.025, 0.1, 0.04])
+button = Button(ax_button, 'Calculer', color=axcolor, hovercolor='0.975')
+
+button.on_clicked(lambda event: update_image())
+slider_accuracy.on_changed(update_accuracy)
+slider_deficiency.on_changed(update_deficiency_factor)
+slider_threshold.on_changed(update_threshold)
+
+update_image()
+
+fig.canvas.mpl_connect('motion_notify_event', display_pixel_score)
+
+plt.show()
