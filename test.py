@@ -31,6 +31,18 @@ def calculate_pixel_scores(ref_hsv, mask):
                 v_scores[y] = 0
     return h_scores, s_scores, v_scores
 
+def NTSF(value, kfactor, method):
+    """
+    first u think of a sigmoid function, with a k factor, 
+    i found https://dhemery.github.io/DHE-Modules/technical/sigmoid/#function
+    kfactor is the curvature factor
+    value is the value to input
+
+    The function returns a value between 0 and 1
+
+    """
+    return (value - kfactor*value) / kfactor - 2*kfactor*np.abs(value)+1
+
 def calculate_heatmaps(ref_scores, target_hsv, mask, threshold, offset_deficiency, offset_accuracy):
     heatmap_h = np.zeros((target_hsv.shape[0], target_hsv.shape[1]), dtype=np.float16)
     heatmap_s = np.zeros((target_hsv.shape[0], target_hsv.shape[1]), dtype=np.float16)
