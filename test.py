@@ -6,7 +6,6 @@ from matplotlib.widgets import Slider, Button
 from statistics import *
 
 offset_accuracy = 0
-offset_deficiency = 0
 imgplot = None
 ref_image_path = "available_logo.png"
 target_image_path = "screenshot.jpg"
@@ -43,7 +42,7 @@ def apply_normalized_tunable_sigmoid_function(value, offset_accuracy):
     return (value - value * offset_accuracy) / (offset_accuracy - np.abs(value) * 2 * offset_accuracy + 1)
 
 
-def calculate_heatmaps(ref_scores, target_hsv, mask, offset_deficiency, offset_accuracy):
+def calculate_heatmaps(ref_scores, target_hsv, mask, offset_accuracy):
     heatmap_h = np.zeros((target_hsv.shape[0], target_hsv.shape[1]), dtype=np.float16)
     heatmap_s = np.zeros((target_hsv.shape[0], target_hsv.shape[1]), dtype=np.float16)
     heatmap_v = np.zeros((target_hsv.shape[0], target_hsv.shape[1]), dtype=np.float16)
@@ -107,11 +106,6 @@ def calculate_heatmaps(ref_scores, target_hsv, mask, offset_deficiency, offset_a
             score_h = np.mean(score_h)
             score_s = np.mean(score_s) 
             score_v = np.mean(score_v) 
-                        
-            if x == 0 and y == 0:
-                print(f"score_h: {score_h}, score_s: {score_s}, score_v: {score_v}")
-                print(f'normalization_factor: {normalization_factor}')
-                print(f'accacy_factor: {offset_accuracy}')
             
             heatmap_h[y, x] = score_h
             heatmap_s[y, x] = score_s
@@ -125,8 +119,7 @@ def create_combined_heatmap(heatmap_h, heatmap_s, heatmap_v):
     combined_heatmap = cv2.normalize(combined_heatmap.astype('float32'), None, 0, 1, cv2.NORM_MINMAX)
     return combined_heatmap
 
-def create_color_heatmap(ref_image_path, target_image_path, threshold, offset_deficiency, offset_accuracy):
-    #print(ref_image_path, target_image_path, threshold, offset_accuracy, offset_deficiency)
+def create_color_heatmap(ref_image_path, target_image_path, threshold, offset_accuracy):
     ref_image = cv2.imread(ref_image_path, cv2.IMREAD_UNCHANGED)
     target_image = cv2.imread(target_image_path)
 
@@ -140,11 +133,9 @@ def create_color_heatmap(ref_image_path, target_image_path, threshold, offset_de
     target_hsv = cv2.cvtColor(target_image, cv2.COLOR_BGR2HSV)
 
     ref_scores = calculate_pixel_scores(ref_hsv, mask)
-    heatmap_h, heatmap_s, heatmap_v = calculate_heatmaps(ref_scores, target_hsv, mask, offset_deficiency, offset_accuracy)
+    heatmap_h, heatmap_s, heatmap_v = calculate_heatmaps(ref_scores, target_hsv, mask, offset_accuracy)
     global combined_heatmap
     combined_heatmap = create_combined_heatmap(heatmap_h, heatmap_s, heatmap_v)
-    # print max value of combined_heatmap and its position
-    #print(np.max(combined_heatmap), np.unravel_index(np.argmax(combined_heatmap, axis=None), combined_heatmap.shape))
     heatmap_colored = cv2.applyColorMap((1 - combined_heatmap * 255).astype(np.uint8), cv2.COLORMAP_JET)
     # Aplly the threshold
     heatmap_colored[combined_heatmap < threshold] = 0
@@ -169,7 +160,7 @@ def calculate():
     """
     ot = time()
     global overlay
-    overlay= create_color_heatmap(ref_image_path, target_image_path, threshold, offset_deficiency, offset_accuracy)
+    overlay= create_color_heatmap(ref_image_path, target_image_path, threshold, offset_accuracy)
     et = time() - ot
     print(f"Elapsed time: {et} s")
 
@@ -188,10 +179,6 @@ def update_accuracy(val):
     global offset_accuracy
     offset_accuracy = val
 
-def update_deficiency_factor(val):
-    global offset_deficiency
-    offset_deficiency = val
-
 def update_threshold(val):
     global threshold
     threshold = val
@@ -201,11 +188,9 @@ plt.subplots_adjust(left=0.1, bottom=0.25, right=0.9, top=0.99, wspace=0.2, hspa
 axcolor = 'lightgoldenrodyellow'
 
 ax_slider_accuracy = plt.axes([0.25, 0.2, 0.65, 0.03], facecolor=axcolor)
-ax_slider_deficiency = plt.axes([0.25, 0.15, 0.65, 0.03], facecolor=axcolor)
 ax_slider_threshold = plt.axes([0.25, 0.1, 0.65, 0.03], facecolor=axcolor)
 
 slider_accuracy = Slider(ax_slider_accuracy, 'Accuracy', -1, 1, valinit=offset_accuracy, valstep=0.01)
-slider_deficiency = Slider(ax_slider_deficiency, 'Deficiency', 0, .1, valinit=offset_deficiency, valstep=0.01)
 slider_threshold = Slider(ax_slider_threshold, 'Threshold', 0, 1, valinit=threshold, valstep=0.01)
 
 ax_button = plt.axes([0.8, 0.025, 0.1, 0.04])
@@ -213,7 +198,6 @@ button = Button(ax_button, 'Calculer', color=axcolor, hovercolor='0.975')
 
 button.on_clicked(lambda event: update_image())
 slider_accuracy.on_changed(update_accuracy)
-slider_deficiency.on_changed(update_deficiency_factor)
 slider_threshold.on_changed(update_threshold)
 
 update_image()
