@@ -5,12 +5,12 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, Button
 from statistics import *
 
-offset_accuracy = 1
+offset_accuracy = 0
 offset_deficiency = 0
 imgplot = None
 ref_image_path = "available_logo.png"
 target_image_path = "screenshot.jpg"
-threshold = 0.4
+threshold = 0
 overlay = None
 combined_heatmap = None
 
@@ -31,27 +31,19 @@ def calculate_pixel_scores(ref_hsv, mask):
                 v_scores[y] = 0
     return h_scores, s_scores, v_scores
 
-<<<<<<< HEAD
 def apply_normalized_tunable_sigmoid_function(value, offset_accuracy):
-    #https://dhemery.github.io/DHE-Modules/technical/sigmoid/
+    """
+    This function is crucial for the calculation of the score of the pixels.
+    It's a sigmoid function with x and k value, x  is the current score and k for adjusting curve steepness.
+    
+    The usage of this function is to amplify nice score and reduce bad score.
+    
+    s/o https://dhemery.github.io/DHE-Modules/technical/sigmoid/
+    """
     return (value - value * offset_accuracy) / (offset_accuracy - np.abs(value) * 2 * offset_accuracy + 1)
 
-def calculate_heatmaps(ref_scores, target_hsv, mask, threshold, offset_deficiency, accuracy_factor):
-=======
-def NTSF(value, kfactor, method):
-    """
-    first u think of a sigmoid function, with a k factor, 
-    i found https://dhemery.github.io/DHE-Modules/technical/sigmoid/#function
-    kfactor is the curvature factor
-    value is the value to input
 
-    The function returns a value between 0 and 1
-
-    """
-    return (value - kfactor*value) / kfactor - 2*kfactor*np.abs(value)+1
-
-def calculate_heatmaps(ref_scores, target_hsv, mask, threshold, offset_deficiency, offset_accuracy):
->>>>>>> 9f5f7d0e6fe3204b765b1f2571c7b30c0c5437d1
+def calculate_heatmaps(ref_scores, target_hsv, mask, offset_deficiency, offset_accuracy):
     heatmap_h = np.zeros((target_hsv.shape[0], target_hsv.shape[1]), dtype=np.float16)
     heatmap_s = np.zeros((target_hsv.shape[0], target_hsv.shape[1]), dtype=np.float16)
     heatmap_v = np.zeros((target_hsv.shape[0], target_hsv.shape[1]), dtype=np.float16)
@@ -94,18 +86,23 @@ def calculate_heatmaps(ref_scores, target_hsv, mask, threshold, offset_deficienc
             
             The normalization factor is calculated as follows:
             normalization_factor = effective pixels in the mask / max effectifs pixels in the mask
+            
             """
             normalization_factor = effective_pixels / max_effectifs_pixels_within_mask
             
 
-            score_h = patch_h - ref_patch_h
-            score_s = patch_s - ref_patch_s
-            score_v = patch_v - ref_patch_v
+            score_h = np.abs(patch_h - ref_patch_h) / 360
+            score_s = np.abs(patch_s - ref_patch_s) / 100
+            score_v = np.abs(patch_v - ref_patch_v) / 100
             
+            """
+            0.8, 0.1, 0.1 are the weights of the channels h, s, v respectively
+            For this case I considered the h channel to be more important than the other channels
+            """
 
-            score_h = apply_normalized_tunable_sigmoid_function(score_h, accuracy_factor - 1) * normalization_factor 
-            score_s = apply_normalized_tunable_sigmoid_function(score_s, accuracy_factor - 1) * normalization_factor 
-            score_v = apply_normalized_tunable_sigmoid_function(score_v, accuracy_factor - 1) * normalization_factor 
+            score_h = apply_normalized_tunable_sigmoid_function(score_h, offset_accuracy) * normalization_factor * 0.8
+            score_s = apply_normalized_tunable_sigmoid_function(score_s, offset_accuracy) * normalization_factor * 0.1
+            score_v = apply_normalized_tunable_sigmoid_function(score_v, offset_accuracy) * normalization_factor * 0.1
             
             score_h = np.mean(score_h)
             score_s = np.mean(score_s) 
@@ -114,7 +111,7 @@ def calculate_heatmaps(ref_scores, target_hsv, mask, threshold, offset_deficienc
             if x == 0 and y == 0:
                 print(f"score_h: {score_h}, score_s: {score_s}, score_v: {score_v}")
                 print(f'normalization_factor: {normalization_factor}')
-                print(f'accacy_factor: {accuracy_factor}')
+                print(f'accacy_factor: {offset_accuracy}')
             
             heatmap_h[y, x] = score_h
             heatmap_s[y, x] = score_s
@@ -143,13 +140,15 @@ def create_color_heatmap(ref_image_path, target_image_path, threshold, offset_de
     target_hsv = cv2.cvtColor(target_image, cv2.COLOR_BGR2HSV)
 
     ref_scores = calculate_pixel_scores(ref_hsv, mask)
-    heatmap_h, heatmap_s, heatmap_v = calculate_heatmaps(ref_scores, target_hsv, mask, threshold, offset_deficiency, offset_accuracy)
+    heatmap_h, heatmap_s, heatmap_v = calculate_heatmaps(ref_scores, target_hsv, mask, offset_deficiency, offset_accuracy)
     global combined_heatmap
     combined_heatmap = create_combined_heatmap(heatmap_h, heatmap_s, heatmap_v)
     # print max value of combined_heatmap and its position
     #print(np.max(combined_heatmap), np.unravel_index(np.argmax(combined_heatmap, axis=None), combined_heatmap.shape))
     heatmap_colored = cv2.applyColorMap((1 - combined_heatmap * 255).astype(np.uint8), cv2.COLORMAP_JET)
-
+    # Aplly the threshold
+    heatmap_colored[combined_heatmap < threshold] = 0
+    
     overlay = cv2.addWeighted(target_image, 0.5, heatmap_colored, 0.5, 0)
     return overlay
 
@@ -205,7 +204,7 @@ ax_slider_accuracy = plt.axes([0.25, 0.2, 0.65, 0.03], facecolor=axcolor)
 ax_slider_deficiency = plt.axes([0.25, 0.15, 0.65, 0.03], facecolor=axcolor)
 ax_slider_threshold = plt.axes([0.25, 0.1, 0.65, 0.03], facecolor=axcolor)
 
-slider_accuracy = Slider(ax_slider_accuracy, 'Accuracy', 0.75, 1.25, valinit=offset_accuracy, valstep=0.0001)
+slider_accuracy = Slider(ax_slider_accuracy, 'Accuracy', -1, 1, valinit=offset_accuracy, valstep=0.01)
 slider_deficiency = Slider(ax_slider_deficiency, 'Deficiency', 0, .1, valinit=offset_deficiency, valstep=0.01)
 slider_threshold = Slider(ax_slider_threshold, 'Threshold', 0, 1, valinit=threshold, valstep=0.01)
 
